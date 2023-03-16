@@ -379,6 +379,13 @@ void ConfigBase::add_discarded_pass(const std::string pass) {
   return;
 }
 
+// Set external custom allocator
+void ConfigBase::set_custom_allocator(TargetType target_type,
+                                      CustomAllocator custom_allocator) {
+  // TODO(shentanyue): TargetType will be supported in the future.
+  lite::Allocator::Global().SetCustomAllocator(custom_allocator);
+}
+
 #ifdef LITE_WITH_X86
 void ConfigBase::set_x86_math_num_threads(int threads) {
   x86_math_num_threads_ = threads;
@@ -562,8 +569,12 @@ void CxxConfig::set_xpu_multi_encoder_precision(const std::string &precision) {
 void CxxConfig::set_xpu_multi_encoder_method(const std::string &precision,
                                              bool adaptive_seqlen) {
 #ifdef LITE_WITH_XPU
-  lite::TargetWrapperXPU::multi_encoder_precision = precision;
-  lite::TargetWrapperXPU::multi_encoder_adaptive_seqlen = adaptive_seqlen;
+  reinterpret_cast<lite::XPURunTimeOption *>(
+      target_configs()[TARGET(kXPU)].get())
+      ->multi_encoder_precision = precision;
+  reinterpret_cast<lite::XPURunTimeOption *>(
+      target_configs()[TARGET(kXPU)].get())
+      ->multi_encoder_adaptive_seqlen = adaptive_seqlen;
 #else
   LOG(WARNING) << "The invoking of the function "
                   "'set_xpu_multi_encoder_method' is "
@@ -573,7 +584,9 @@ void CxxConfig::set_xpu_multi_encoder_method(const std::string &precision,
 
 void CxxConfig::set_xpu_local_quant(bool local_quant) {
 #ifdef LITE_WITH_XPU
-  lite::TargetWrapperXPU::local_quant = local_quant;
+  reinterpret_cast<lite::XPURunTimeOption *>(
+      target_configs()[TARGET(kXPU)].get())
+      ->local_quant = local_quant;
 #else
   LOG(WARNING) << "The invoking of the function "
                   "'set_xpu_local_quant' is "
@@ -583,7 +596,9 @@ void CxxConfig::set_xpu_local_quant(bool local_quant) {
 
 void CxxConfig::set_xpu_compute_precision(const std::string &precision) {
 #ifdef LITE_WITH_XPU
-  lite::TargetWrapperXPU::compute_precision = precision;
+  reinterpret_cast<lite::XPURunTimeOption *>(
+      target_configs()[TARGET(kXPU)].get())
+      ->compute_precision = precision;
 #else
   LOG(WARNING) << "The invoking of the function "
                   "'xpu_compute_precision' is "
@@ -729,7 +744,8 @@ void MobileConfig::set_model_from_buffer(std::string &&x) {
 }
 
 void MobileConfig::set_model_from_buffer(const char *buffer, size_t length) {
-  lite_model_file_.assign(buffer, length);
+  lite_model_buffer_ptr_ = buffer;
+  lite_model_buffer_size_ = length;
   model_from_memory_ = true;
 }
 

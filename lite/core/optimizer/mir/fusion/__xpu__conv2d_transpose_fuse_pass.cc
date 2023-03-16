@@ -77,9 +77,9 @@ class XPUConv2dTransFuser : public FuseBase {
     // only support no output_padding and xpu2 now.
     auto unsupported_cond = [](const Node* node) -> bool {
       auto op_desc = *const_cast<Node*>(node)->stmt()->op_info();
-      int cur_dev_idx = 0;
       uint64_t cur_dev_attr_ = 0;
 #ifdef LITE_WITH_XPU
+      int cur_dev_idx = 0;
       XPU_CALL(xpu_current_device(&cur_dev_idx));
       XPU_CALL(xpu_device_get_attr(&cur_dev_attr_, XPUATTR_MODEL, cur_dev_idx));
 #endif
@@ -336,7 +336,7 @@ class XPUConv2dTransFuser : public FuseBase {
         graph->GraphCreateInstructNode(new_conv_op, valid_places);
     DirectedLink(matched.at("input"), new_op_node);
     DirectedLink(matched.at("conv2d_trans_filter"), new_op_node);
-    if (with_bn_ || with_conv_bias_) {
+    if (with_bn_ || with_conv_bias_ || with_ew_bias_) {
       DirectedLink(fusion_bias_node, new_op_node);
     }
     DirectedLink(new_op_node, matched.at(output_node_name));

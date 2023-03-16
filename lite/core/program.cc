@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
-
+#include <iostream>
 #ifdef ENABLE_ARM_FP16
 #include "lite/backends/arm/math/fp16/funcs_fp16.h"
 #endif
@@ -292,7 +292,8 @@ RuntimeProgram::RuntimeProgram(
     auto op_desc = block_desc->GetOp<cpp::OpDesc>(op_idx);
     CHECK(op_desc);
     std::string op_type = op_desc->Type();
-    // if (op_type == "feed" || op_type == "fetch") continue;
+    VLOG(3) << "DebugOpType：'" << op_type; 
+   // if (op_type == "feed" || op_type == "fetch") continue;
     // Create op and pick up the best kernel
     auto op = LiteOpRegistry::Global().Create(op_type);
 
@@ -596,6 +597,7 @@ void RuntimeProgram::Run() {
   int idx = -1;
 
   auto& insts = instructions_[kRootBlockIdx];
+  VLOG(3) << "DebugOpInsts：'" << &insts;
   for (auto& inst : insts) {
     ++idx;
 #if !defined(LITE_WITH_METAL)
@@ -614,208 +616,218 @@ void RuntimeProgram::Run() {
           inst_precision_profiler.GetInstPrecision(&inst);
     }
 #endif  // LITE_WITH_PRECISION_PROFILE
-  }
+}
 
 #ifdef LITE_WITH_METAL
-  if (metal_ctx_) {
-    MetalContext* wait_ctx = (*metal_ctx_).As<MTLContext>().context();
-    wait_ctx->wait_all_completed();
-  }
+if (metal_ctx_) {
+MetalContext* wait_ctx = (*metal_ctx_).As<MTLContext>().context();
+wait_ctx->wait_all_completed();
+}
 #endif
 
-#ifdef LITE_WITH_PROFILE
-  LOG(INFO) << "\n" << profiler_.Summary(profile::Type::kDispatch, false, 1);
-#endif
 #ifdef LITE_WITH_PRECISION_PROFILE
-  LOG(INFO) << "\n"
-            << precision_profiler_summary
-            << inst_precision_profiler.GetSummaryTail();
+LOG(INFO) << "\n"
+    << precision_profiler_summary
+    << inst_precision_profiler.GetSummaryTail();
 #endif
 }
 
 void Program::Build(const std::shared_ptr<cpp::ProgramDesc>& program_desc) {
-  CHECK(ops_.empty()) << "Executor duplicate Build found";
+CHECK(ops_.empty()) << "Executor duplicate Build found";
 
-  // Create operators.
-  auto block_size = program_desc->BlocksSize();
-  CHECK(block_size);
-  ops_.resize(block_size);
-  for (size_t block_idx = 0; block_idx < block_size; ++block_idx) {
-    auto* block_desc = program_desc->GetBlock<cpp::BlockDesc>(block_idx);
-    auto op_size = block_desc->OpsSize();
-    for (size_t op_idx = 0; op_idx < op_size; ++op_idx) {
-      auto* op_desc = block_desc->GetOp<cpp::OpDesc>(op_idx);
-      auto op_type = op_desc->Type();
-      VLOG(4) << "create Op [" << op_type << "]";
-      auto op = LiteOpRegistry::Global().Create(op_type);
-      CHECK(op) << "no Op found for " << op_type;
-      if (op_type == "while") {
-        static_cast<operators::WhileOp*>(op.get())->SetProgramDesc(
-            program_desc);
-      } else if (op_type == "conditional_block") {
-        static_cast<operators::ConditionalBlockOp*>(op.get())->SetProgramDesc(
-            program_desc);
-      } else if (op_type == "subgraph") {
-        static_cast<operators::SubgraphOp*>(op.get())->SetProgramDesc(
-            program_desc);
-      }
-      op->Attach(*op_desc, exec_scope_);
-      ops_[block_idx].emplace_back(std::move(op));
-    }
-  }
+// Create operators.
+auto block_size = program_desc->BlocksSize();
+CHECK(block_size);
+ops_.resize(block_size);
+for (size_t block_idx = 0; block_idx < block_size; ++block_idx) {
+auto* block_desc = program_desc->GetBlock<cpp::BlockDesc>(block_idx);
+auto op_size = block_desc->OpsSize();
+for (size_t op_idx = 0; op_idx < op_size; ++op_idx) {
+auto* op_desc = block_desc->GetOp<cpp::OpDesc>(op_idx);
+auto op_type = op_desc->Type();
+VLOG(4) << "create Op [" << op_type << "]";
+auto op = LiteOpRegistry::Global().Create(op_type);
+CHECK(op) << "no Op found for " << op_type;
+if (op_type == "while") {
+static_cast<operators::WhileOp*>(op.get())->SetProgramDesc(
+    program_desc);
+} else if (op_type == "conditional_block") {
+static_cast<operators::ConditionalBlockOp*>(op.get())->SetProgramDesc(
+    program_desc);
+} else if (op_type == "subgraph") {
+static_cast<operators::SubgraphOp*>(op.get())->SetProgramDesc(
+    program_desc);
+}
+op->Attach(*op_desc, exec_scope_);
+ops_[block_idx].emplace_back(std::move(op));
+}
+}
 }
 
 void Program::PrepareWorkspace(
-    const std::shared_ptr<cpp::ProgramDesc>& program_desc,
-    const std::vector<std::string>& vars_to_clone) {
-  CHECK(!exec_scope_) << "Duplicate PrepareWorkspace found";
-  exec_scope_ = &scope_->NewScope();
-  // Create Feed and Fetch var.
-  scope_->Var("feed")->GetMutable<std::vector<lite::Tensor>>();
-  scope_->Var("fetch")->GetMutable<std::vector<lite::Tensor>>();
-  vars_.push_back("feed");
-  vars_.push_back("fetch");
+const std::shared_ptr<cpp::ProgramDesc>& program_desc,
+const std::vector<std::string>& vars_to_clone) {
+CHECK(!exec_scope_) << "Duplicate PrepareWorkspace found";
+exec_scope_ = &scope_->NewScope();
+// Create Feed and Fetch var.
+scope_->Var("feed")->GetMutable<std::vector<lite::Tensor>>();
+scope_->Var("fetch")->GetMutable<std::vector<lite::Tensor>>();
+vars_.push_back("feed");
+vars_.push_back("fetch");
 
-  auto VarDescType2PrecisionType =
-      [](const lite::VarDescAPI::Type& type) -> PrecisionType {
-    switch (type) {
-      case lite::VarDescAPI::Type::BOOL:
-        return PRECISION(kBool);
-      case lite::VarDescAPI::Type::FP32:
-        return PRECISION(kFloat);
-      case lite::VarDescAPI::Type::FP16:
-        return PRECISION(kFP16);
-      case lite::VarDescAPI::Type::INT8:
-        return PRECISION(kInt8);
-      case lite::VarDescAPI::Type::INT16:
-        return PRECISION(kInt16);
-      case lite::VarDescAPI::Type::INT32:
-        return PRECISION(kInt32);
-      case lite::VarDescAPI::Type::INT64:
-        return PRECISION(kInt64);
-      case lite::VarDescAPI::Type::UINT8:
-        return PRECISION(kUInt8);
-      default:
-        LOG(WARNING) << "Unable to convert var desc type("
-                     << static_cast<int>(type) << ") to precision type!";
-        return PRECISION(kUnk);
-    }
-  };
+auto VarDescType2PrecisionType =
+[](const lite::VarDescAPI::Type& type) -> PrecisionType {
+switch (type) {
+case lite::VarDescAPI::Type::BOOL:
+return PRECISION(kBool);
+case lite::VarDescAPI::Type::FP32:
+return PRECISION(kFloat);
+case lite::VarDescAPI::Type::FP16:
+return PRECISION(kFP16);
+case lite::VarDescAPI::Type::INT8:
+return PRECISION(kInt8);
+case lite::VarDescAPI::Type::INT16:
+return PRECISION(kInt16);
+case lite::VarDescAPI::Type::INT32:
+return PRECISION(kInt32);
+case lite::VarDescAPI::Type::INT64:
+return PRECISION(kInt64);
+case lite::VarDescAPI::Type::UINT8:
+return PRECISION(kUInt8);
+default:
+LOG(WARNING) << "Unable to convert var desc type("
+	     << static_cast<int>(type) << ") to precision type!";
+return PRECISION(kUnk);
+}
+};
 
-  auto block_size = program_desc->BlocksSize();
-  CHECK(block_size);
-  for (size_t block_idx = 0; block_idx < block_size; ++block_idx) {
-    auto* block_desc = program_desc->GetBlock<cpp::BlockDesc>(block_idx);
-    auto var_size = block_desc->VarsSize();
-    for (size_t var_idx = 0; var_idx < var_size; ++var_idx) {
-      auto* var_desc = block_desc->GetVar<cpp::VarDesc>(var_idx);
-      const auto& var_name = var_desc->Name();
-      const auto& var_type = var_desc->GetType();
-      VLOG(4) << "Var " << var_name << " in block " << block_idx;
-      VLOG(4) << " - type " << static_cast<int>(var_type);
-      // Create tensors or weights from variable description.
-      if (!var_desc->Persistable()) {
-        vars_.push_back(var_name);
-        auto* var = exec_scope_->Var(var_name);
-        if (var_type == lite::VarDescAPI::Type::LOD_TENSOR) {
-          const auto& var_data_type =
-              VarDescType2PrecisionType(var_desc->GetDataType());
-          if (var_data_type != PRECISION(kUnk)) {
-            var_type_map_[var_name] = LiteType::GetTensorTy(
-                TARGET(kUnk), var_data_type, DATALAYOUT(kUnk));
-          }
-          VLOG(4) << " - data type " << static_cast<int>(var_data_type);
-          // Create the tensor with the shape from var desc, it's convenient to
-          // the graph analysis in the passes, but you should resize the tensor
-          // with the real shape before accessing its data, because the
-          // var_shape may be [-1,3,224,224]
-          const auto& var_shape = var_desc->GetShape();
-          auto* tensor = var->GetMutable<lite::Tensor>();
-          if (tensor->dims().empty() && !var_shape.empty()) {
-            tensor->Resize(var_shape);
-            VLOG(4) << " - dims " << tensor->dims().repr();
-          }
-          tensor->set_precision(var_data_type);
-          tensor->set_persistable(var_desc->Persistable());
-        } else if (var_type == lite::VarDescAPI::Type::LOD_TENSOR_ARRAY) {
-          var_type_map_[var_name] = LiteType::GetTensorListTy(
-              TARGET(kUnk), PRECISION(kUnk), DATALAYOUT(kUnk));
-          auto* tensor_array = var->GetMutable<std::vector<lite::Tensor>>();
-          tensor_array->resize(0);
-        } else if (var_type == lite::VarDescAPI::Type::STEP_SCOPES) {
-          var->GetMutable<std::vector<lite::Scope*>>();
-        }
-      } else {
-        if (var_type == lite::VarDescAPI::Type::LOD_TENSOR) {
-          const auto& var_data_type =
-              VarDescType2PrecisionType(var_desc->GetDataType());
-          if (var_data_type != PRECISION(kUnk)) {
-            var_type_map_[var_name] = LiteType::GetTensorTy(
-                TARGET(kUnk), var_data_type, DATALAYOUT(kUnk));
-          }
-          VLOG(4) << " - data type " << static_cast<int>(var_data_type);
-        } else if (var_type == lite::VarDescAPI::Type::LOD_TENSOR_ARRAY) {
-          var_type_map_[var_name] = LiteType::GetTensorListTy(
-              TARGET(kUnk), PRECISION(kUnk), DATALAYOUT(kUnk));
-        }
-        if (var_name == "feed" || var_name == "fetch") continue;
-        weights_.push_back(var_name);
-        scope_->Var(var_name);
-      }
-    }
+auto block_size = program_desc->BlocksSize();
+CHECK(block_size);
+for (size_t block_idx = 0; block_idx < block_size; ++block_idx) {
+auto* block_desc = program_desc->GetBlock<cpp::BlockDesc>(block_idx);
+auto var_size = block_desc->VarsSize();
+for (size_t var_idx = 0; var_idx < var_size; ++var_idx) {
+auto* var_desc = block_desc->GetVar<cpp::VarDesc>(var_idx);
+const auto& var_name = var_desc->Name();
+const auto& var_type = var_desc->GetType();
+VLOG(4) << "Var " << var_name << " in block " << block_idx;
+VLOG(4) << " - type " << static_cast<int>(var_type);
+// Create tensors or weights from variable description.
+if (!var_desc->Persistable()) {
+vars_.push_back(var_name);
+auto* var = exec_scope_->Var(var_name);
+if (var_type == lite::VarDescAPI::Type::LOD_TENSOR) {
+  const auto& var_data_type =
+      VarDescType2PrecisionType(var_desc->GetDataType());
+  if (var_data_type != PRECISION(kUnk)) {
+    var_type_map_[var_name] = LiteType::GetTensorTy(
+	TARGET(kUnk), var_data_type, DATALAYOUT(kUnk));
   }
-
-  for (auto var_name : vars_to_clone) {
-    exec_scope_->LocalVar(var_name);
-    auto* tensor = scope_->Var(var_name)->GetMutable<Tensor>();
-    auto* sub_tensor = exec_scope_->Var(var_name)->GetMutable<Tensor>();
-    sub_tensor->CopyDataFrom(*tensor);
+  VLOG(4) << " - data type " << static_cast<int>(var_data_type);
+  // Create the tensor with the shape from var desc, it's convenient to
+  // the graph analysis in the passes, but you should resize the tensor
+  // with the real shape before accessing its data, because the
+  // var_shape may be [-1,3,224,224]
+  const auto& var_shape = var_desc->GetShape();
+  auto* tensor = var->GetMutable<lite::Tensor>();
+  if (tensor->dims().empty() && !var_shape.empty()) {
+    tensor->Resize(var_shape);
+    VLOG(4) << " - dims " << tensor->dims().repr();
   }
+  tensor->set_precision(var_data_type);
+  tensor->set_persistable(var_desc->Persistable());
+} else if (var_type == lite::VarDescAPI::Type::LOD_TENSOR_ARRAY) {
+  var_type_map_[var_name] = LiteType::GetTensorListTy(
+      TARGET(kUnk), PRECISION(kUnk), DATALAYOUT(kUnk));
+  auto* tensor_array = var->GetMutable<std::vector<lite::Tensor>>();
+  tensor_array->resize(0);
+} else if (var_type == lite::VarDescAPI::Type::STEP_SCOPES) {
+  var->GetMutable<std::vector<lite::Scope*>>();
+}
+} else {
+if (var_type == lite::VarDescAPI::Type::LOD_TENSOR) {
+  const auto& var_data_type =
+      VarDescType2PrecisionType(var_desc->GetDataType());
+  if (var_data_type != PRECISION(kUnk)) {
+    var_type_map_[var_name] = LiteType::GetTensorTy(
+	TARGET(kUnk), var_data_type, DATALAYOUT(kUnk));
+  }
+  VLOG(4) << " - data type " << static_cast<int>(var_data_type);
+} else if (var_type == lite::VarDescAPI::Type::LOD_TENSOR_ARRAY) {
+  var_type_map_[var_name] = LiteType::GetTensorListTy(
+      TARGET(kUnk), PRECISION(kUnk), DATALAYOUT(kUnk));
+}
+if (var_name == "feed" || var_name == "fetch") continue;
+weights_.push_back(var_name);
+scope_->Var(var_name);
+}
+}
+}
+
+for (auto var_name : vars_to_clone) {
+exec_scope_->LocalVar(var_name);
+auto* tensor = scope_->Var(var_name)->GetMutable<Tensor>();
+auto* sub_tensor = exec_scope_->Var(var_name)->GetMutable<Tensor>();
+sub_tensor->CopyDataFrom(*tensor);
+}
 }
 
 #ifdef LITE_WITH_METAL
 void Instruction::SaveOutput() {
-  if (kernel_) kernel_->SaveOutput();
+if (kernel_) kernel_->SaveOutput();
 }
 #endif
 
 void Instruction::Run() {
 #ifdef LITE_WITH_PROFILE
-  CHECK(profiler_) << "Profiler pointer of kernel can not be nullptr. "
-                      "When LITE_WITH_PROFILE is defined, please set a "
-                      "Profiler for Instruction.";
-  profiler_->StartTiming(
-      profile::Type::kCreate, profile_id_, kernel_->mutable_context());
+CHECK(profiler_) << "Profiler pointer of kernel can not be nullptr. "
+	      "When LITE_WITH_PROFILE is defined, please set a "
+	      "Profiler for Instruction.";
+if (first_epoch_for_profiler_) {
+kernel_->SetIsKernelTest(false);
+auto* op_ch = profiler_->GetOpCharacter(profile_id_);
+SetProfileRuntimeOpInfo(op_ch);
+first_epoch_for_profiler_ = false;
+}
+profiler_->StartTiming(
+profile::Type::kCreate, profile_id_, kernel_->mutable_context());
 #endif
-  CHECK(op_) << "op null";
-  CHECK(kernel_) << "kernel null";
+CHECK(op_) << "op null";
+CHECK(kernel_) << "kernel null";
 
-  if (first_epoch_) {
-    first_epoch_ = false;
-    CHECK(op_->CheckShape());
-  }
+if (first_epoch_) {
+first_epoch_ = false;
+CHECK(op_->CheckShape());
+}
 
-  if (op_->run_once() && has_run_) {
-    return;
-  }
+if (op_->run_once() && has_run_) {
+return;
+}
 
-  op_->InferShape();
-  kernel_->Launch();
-  has_run_ = true;
 
-#ifdef LITE_WITH_PROFILE
-  if (first_epoch_for_profiler_) {
-    kernel_->SetIsKernelTest(false);
-    auto* op_ch = profiler_->GetOpCharacter(profile_id_);
-    SetProfileRuntimeOpInfo(op_ch);
-    first_epoch_for_profiler_ = false;
-  }
-#endif
+
+op_->InferShape();
+VLOG(3) << "DebugOp：" << op_->InferShape(); 
+std::string op_name = op_->op_info()->Type();
+VLOG(3) << "op_type: " << op_name;
+
+auto out_names = op_->op_info()->output_names();
+    auto in_names = op_->op_info()->input_names();
+    for (auto& out_name : in_names) {
+    VLOG(3)<<"===TensorName:"<<out_name;
+}
+
+VLOG(3)<<"DebugLauchStart";
+kernel_->Launch();
+VLOG(3)<<"DebugLauchEnd";
+
+has_run_ = true;
+
 }
 
 STL::ostream& operator<<(STL::ostream& os, const Instruction& other) {
-  os << other.kernel_->summary() << "\t(" << other.kernel_->doc() << ")";
-  return os;
+os << other.kernel_->summary() << "\t(" << other.kernel_->doc() << ")";
+return os;
 }
 
 }  // namespace lite

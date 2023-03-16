@@ -42,6 +42,15 @@ void LookupTableCompute<T_W, T_IDS>::Run() {
 
   int64_t row_number = table_dim[0];
   int64_t row_width = table_dim[1];
+
+  VLOG(3) << "DebugOpRowNum：" << row_number; 
+  VLOG(3) << "DebugOpRowWidth：" << row_width; 
+  
+  for(int i=0;i<ids_numel;i++){
+    VLOG(3) << "DebugOpInData：" << ids_data[i]; 
+    VLOG(3) << "DebugOpInDataNum：" << ids_numel; 
+  }
+  
   auto table_data = w->template data<T_W>();
   auto dout = out->template mutable_data<T_W>();
 

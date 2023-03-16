@@ -184,6 +184,13 @@ void CompareCompute<PType, CompareFunctor>::Run() {
   bool *z = param.Out->template mutable_data<bool>();
   const auto *x = param.X->template data<DType>();
   const auto *y = param.Y->template data<DType>();
+  
+  for(int i=0;i<param.X->numel();i++){
+ 	 VLOG(3)<<"InputDataValue"<<x[i];
+  }
+  for(int i=0;i<param.Y->numel();i++){
+ 	 VLOG(3)<<"Input2OutDataValue"<<y[i];
+  }
   if (x_size == y_size) {
     for (int i = 0; i < x_size; ++i) {
       z[i] = CompareFunctor()(x[i], y[i]);

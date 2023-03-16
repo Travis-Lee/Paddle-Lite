@@ -26,6 +26,10 @@ template <typename T, PrecisionType Ptype>
 void ReduceSumCompute<T, Ptype>::Run() {
   auto& param = this->template Param<operators::ReduceParam>();
   auto* input = param.X->template data<T>();
+
+  for(int i=0;i<param.X->numel();i++){
+     VLOG(3)<<"DebugINVlaue:"<<input[i];
+  }
   auto x_vec = param.X->dims().Vectorize();
   int x_rank = param.X->dims().size();
   auto* Out = param.Out->template mutable_data<T>();
@@ -107,6 +111,10 @@ void ReduceSumCompute<T, Ptype>::Run() {
                  << " over than 2, which is not supported now!!";
     }
   }
+  for(int i=0;i<param.Out->numel();i++){
+     VLOG(3)<<"DebugVlaue:"<<Out[i];
+  }
+
 }
 
 }  // namespace arm
